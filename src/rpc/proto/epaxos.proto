@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package epaxos_rpc;
+
+import "sepaxos_rpc.proto";
+
+enum LogStatus {
+    PREPARING = 0;
+    PRE_ACCEPTED = 1;
+    PRE_ACCEPTED_EQ = 2;
+    ACCEPTED = 3;
+    COMMITED = 4;
+    EXECUTED = 5;
+}
+
+enum MsgType{
+    PRE_ACCEPT = 0;
+    PRE_ACCEPT_REPLY = 1;
+    ACCEPT = 2;
+    ACCEPT_REPLY = 3;
+    COMMIT = 4;
+    PREPARE = 5;
+    PREPARE_REPLY = 6;
+    TYR_PREACCEPT = 7;
+    TRY_REPACCEPT_REPLY = 8;
+}
+
+message TryPreAcceptReplyOpt{
+    int32 ConflictInstance = 1;
+    int32 ConflictReplica = 2;
+    LogStatus ConflictStatus = 3;
+}
+
+message Msg {
+    MsgType entry_type = 1;
+    int32 from = 2;
+    int32 replica = 3;
+    int32 instance = 4;
+    int32 ballot = 5;
+    repeated int32 deps = 6;
+    repeated sepaxos_rpc.ClientMsg commands = 7;
+    optional LogStatus status = 8;
+    optional bool ok = 9;
+    optional TryPreAcceptReplyOpt try_preacept_reply = 10;
+}
+
+message Reply {
+
+}
+
+service Communication {
+    rpc Communication(stream Msg) returns(Reply) {}
+}
+
+message GetLeaderRequest{
+    
+}
+
+message GetLeaderReply {
+    int32 leader = 1;
+}
+
+service ClientService{
+    rpc Propose(stream sepaxos_rpc.ClientMsg) returns(stream sepaxos_rpc.ClientMsgReply) {}
+    rpc GetLeader(GetLeaderRequest) returns(GetLeaderReply) {}
+}

@@ -1,0 +1,25 @@
+[package]
+name = "epaxos"
+version = "0.1.0"
+authors = ["wuhao2016 <whaohit@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sepaxos = { path = "../sepaxos"}
+common = { path = "../common"}
+rpc = {path = "../rpc"}
+tokio = { version = "1.0", features = ["full"] }
+prost = "0.7"
+thiserror = "1.0"
+tokio-serde = { version = "0.8", features = ["json", "bincode"] }
+tokio-stream = "0.1.6"
+serde = "1.0"
+tonic = "0.4.3"
+parking_lot = "0.11"
+async-stream = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+futures = "0.3"
+log = "0.4"
+env_logger = "0.8"

@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "src/sepaxos",
+    "src/server",
+    "src/epaxos",
+    "src/rpc",
+    "src/raft",
+    "src/common",
+]

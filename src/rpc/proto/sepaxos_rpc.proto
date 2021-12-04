@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package sepaxos_rpc;
+
+enum LogStatus {
+    PREPARING = 0;
+    PRE_ACCEPTED = 1;
+    PRE_ACCEPTED_EQ = 2;
+    ACCEPTED = 3;
+    COMMITED = 4;
+    EXECUTED = 5;
+    PRE_COMMITED = 6;
+}
+
+enum MsgType{
+    PRE_ACCEPT = 0;
+    PRE_ACCEPT_REPLY = 1;
+    ACCEPT = 2;
+    ACCEPT_REPLY = 3;
+    COMMIT = 4;
+    PRE_COMMIT = 5;
+    PREPARE = 6;
+    PREPARE_REPLY = 7;
+    OUT_OF_DATE = 8;
+}
+
+message Msg {
+    MsgType entry_type = 1;
+    int32 from = 2;
+    int32 replica = 3;
+    int32 instance = 4;
+    int32 ballot = 5;
+    repeated int32 deps = 6;
+    repeated ClientMsg commands = 7;
+    optional LogStatus status = 8;
+    optional bool ok = 9;
+}
+
+message Reply {
+
+}
+
+service Communication {
+    rpc Communication(stream Msg) returns(Reply) {}
+}
+
+message GetLeaderRequest{
+    
+}
+
+message GetLeaderReply {
+    int32 leader = 1;
+}
+
+service ClientService{
+    rpc Propose(stream ClientMsg) returns(stream ClientMsgReply) {}
+    rpc GetLeader(GetLeaderRequest) returns(GetLeaderReply) {}
+}
+
+message ClientMsg {
+    string key = 1;
+    string value = 2;
+    int32 command_id = 3;
+}
+
+message ClientMsgReply {
+    int32 command_id = 1;
+    bool success = 2;
+}

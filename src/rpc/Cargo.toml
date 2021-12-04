@@ -1,0 +1,15 @@
+[package]
+name = "rpc"
+version = "0.1.0"
+authors = ["wuhao2016 <whaohit@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+prost = "0.7"
+serde = "1.0"
+tonic = "0.4.3"
+
+[build-dependencies]
+tonic-build = "0.4.2"

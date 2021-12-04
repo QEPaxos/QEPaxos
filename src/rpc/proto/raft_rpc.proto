@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package raft_rpc;
+import "sepaxos_rpc.proto";
+
+enum State{
+    FOLLOWER = 0;
+    /// The node is campaigning to become the cluster leader.
+    CANDINATE = 1;
+    /// The node is the Raft cluster leader.
+    LEADER = 2;
+}
+
+message Entry {
+    int32 term = 1;
+    int32 index = 2;
+    sepaxos_rpc.ClientMsg msg = 3;
+}
+
+enum RaftMsgType{
+    APPEND = 0;
+    APPEND_RESPONSE = 1;
+    REQUEST_VOTE = 2;
+    REQUEST_VOTE_RESPONSE = 3;
+}
+
+
+message RaftMsg {
+    RaftMsgType entry_type = 1;
+    int32 replica = 3;
+    int32 prev_log_index = 4;
+    int32 prev_log_term = 5;
+    int32 term = 6;
+    repeated Entry entries = 7;
+    int32 leader_commit = 8;
+    bool success = 9;
+    int32 entry_len = 10;
+}
+
+message Reply {
+
+}
+
+service Raft {
+    rpc Raft(stream RaftMsg) returns(Reply) {}
+}
