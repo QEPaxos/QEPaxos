@@ -1,5 +1,7 @@
-# SEPaxos
+# QEPaxos
 Leaderless Consensus in 1 RTT 
+
+TLA+ is in progress
 
 
 server参数
