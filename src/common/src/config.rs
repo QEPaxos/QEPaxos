@@ -8,6 +8,7 @@ pub struct ServerConfig {
     pub server_addrs: HashMap<i32, String>,
     pub propose_server_addrs: HashMap<i32, String>,
     pub test_msg_count_per_server: usize,
+    pub preferred_peer: Vec<Vec<i32>>,
 }
 
 /// all server ids start from 0
@@ -38,6 +39,7 @@ impl ServerConfig {
                 server_addrs,
                 propose_server_addrs,
                 test_msg_count_per_server: 100_0000,
+                preferred_peer: vec![vec![0, 1], vec![0, 1], vec![0, 1]],
             }
         } else {
             let server_ids = vec![0, 1, 2, 3, 4];
@@ -72,6 +74,13 @@ impl ServerConfig {
                 server_addrs,
                 propose_server_addrs,
                 test_msg_count_per_server: 100_0000,
+                preferred_peer: vec![
+                    vec![0, 1, 2],
+                    vec![0, 1, 2],
+                    vec![0, 1, 2],
+                    vec![0, 1, 2],
+                    vec![0, 1, 2],
+                ],
             }
         }
     }

@@ -47,6 +47,8 @@ impl LogEntry {
 pub struct Peer {
     id: i32,
     ballot: i32,
+    thrifty: bool,
+    preferred_peer: Vec<i32>,
     // fast quorum size
     fast_quorom_size: usize,
     paxos_quorum_size: usize,
@@ -81,10 +83,13 @@ impl Peer {
         client_senders: UnboundedSender<ClientMsgReply>,
         execute: bool,
         batch_size: usize,
+        thrifty: bool,
     ) -> Self {
         Self {
             id,
             ballot: 1,
+            thrifty,
+            preferred_peer: config.preferred_peer[id as usize].clone(),
             fast_quorom_size: config.fast_quorum_size,
             paxos_quorum_size: config.paxos_quorum_size,
             peer_num: config.peer_num,
