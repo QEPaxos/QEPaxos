@@ -140,7 +140,7 @@ impl ExecEngine {
             }
 
             if !executed {
-                sleep(Duration::from_millis(300));
+                sleep(Duration::from_micros(10));
             }
         }
     }

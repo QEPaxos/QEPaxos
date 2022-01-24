@@ -18,7 +18,7 @@ use rpc::{
 };
 use tokio::{
     sync::{
-        mpsc::{channel, Sender, UnboundedReceiver, UnboundedSender},
+        mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
         Notify,
     },
     time::{interval, timeout},
@@ -29,9 +29,13 @@ fn gen_election_timeout(min: i32, max: i32) -> i32 {
     ran + min
 }
 
+// pub static mut self.entries: BTreeMap<i32, Entry> = BTreeMap::new();
+
 pub struct Peer {
     id: i32,
+    wide_area: bool,
     config: ServerConfig,
+    batch_size: i32,
     log_index: i32,
     last_applied: i32,
     commit_index: i32,
@@ -42,11 +46,12 @@ pub struct Peer {
     vote_for: i32,
     total_votes: usize,
     last_log_index: i32,
-    entries: BTreeMap<i32, Entry>,
     match_index: Vec<i32>,
     next_index: Vec<i32>,
     set_timer: Arc<Notify>,
     timer_handle: AbortHandle,
+    appending: bool,
+    entries: BTreeMap<i32, Entry>,
     // peer infos
     peer_num: usize,
     quorum_size: usize,
@@ -66,7 +71,8 @@ impl Peer {
         receiver: UnboundedReceiver<PeerMsg>,
         client_reply: UnboundedSender<ClientMsgReply>,
         exec: bool,
-        batch: i32,
+        batch: usize,
+        wide_area: bool,
     ) -> Self {
         let peer_num = config.peer_num;
         let quorum_size = config.paxos_quorum_size;
@@ -96,7 +102,9 @@ impl Peer {
         ));
         Self {
             id,
+            wide_area,
             config,
+            batch_size: batch as i32,
             log_index: 0,
             last_applied: 0,
             commit_index: 0,
@@ -106,6 +114,7 @@ impl Peer {
             vote_for: -1,
             total_votes: 0,
             last_log_index: 0,
+            appending: false,
             entries: BTreeMap::new(),
             match_index: vec![0; peer_num],
             next_index: vec![0; peer_num],
@@ -122,6 +131,7 @@ impl Peer {
 
     pub async fn init_and_run(&mut self, receiver: UnboundedReceiver<ClientMsgReply>) {
         // init rpc
+        // let (client_sender, mut client_receiver) = unbounded_channel::<PeerMsg>();
         self.init_peer_rpc(self.sender.clone(), receiver).await;
 
         self.run().await;
@@ -185,42 +195,55 @@ impl Peer {
             msg: Some(msg),
         };
         // insert to entries
+        // self.entries.insert(index, entry);
+
         self.entries.insert(index, entry);
-        if index == self.commit_index + 1 {
+
+        if !self.appending && index >= self.last_log_index + self.batch_size {
             self.start_append_logs().await;
         }
     }
 
     async fn start_append_logs(&mut self) {
-        // tracing::info!("start append logs");
-        if self.last_log_index == self.log_index {
-            return;
-        }
-        self.set_timer();
-        // init msg
-        let mut prev_log_term = 0;
-        if self.last_log_index > 0 {
-            prev_log_term = self.entries[&self.last_log_index].term;
-        }
-        let mut append = RaftMsg {
-            entry_type: RaftMsgType::Append.into(),
-            replica: self.id,
-            prev_log_index: self.last_log_index,
-            prev_log_term,
-            term: self.current_term,
-            entries: Vec::new(),
-            leader_commit: self.commit_index,
-            success: false,
-            entry_len: 0,
-        };
-        // tracing::info!("self.logindex = {}", self.log_index);
-        for index in (self.last_log_index + 1)..(self.log_index + 1) {
-            // tracing::info!("push ing msg {}", index);
-            append.entries.push(self.entries[&index].clone());
-            append.entry_len += 1;
+        // tracing::info!("start append logs {}", self.last_log_index);
+        if self.log_index >= self.last_log_index + self.batch_size {
+            self.set_timer();
+            // init msg
+            let mut prev_log_term = 0;
+
+            if self.last_log_index > 0 {
+                prev_log_term = self.entries[&self.last_log_index].term;
+            }
+            let mut append = RaftMsg {
+                entry_type: RaftMsgType::Append.into(),
+                replica: self.id,
+                prev_log_index: self.last_log_index,
+                prev_log_term,
+                term: self.current_term,
+                entries: Vec::new(),
+                leader_commit: self.commit_index,
+                success: false,
+                entry_len: 0,
+            };
+            // tracing::info!("self.logindex = {}", self.log_index);
+
+            let mut index = self.last_log_index + 1;
+            while index < self.last_log_index + self.batch_size + 1 {
+                append.entries.push(self.entries[&index].clone());
+                append.entry_len += 1;
+                index += 1;
+            }
+
+            self.broadcast_to_peers(append).await;
+            self.appending = true;
+        } else {
+            self.appending = false;
         }
 
-        self.broadcast_to_peers(append).await;
+        // for index in (self.last_log_index + 1)..(self.last_log_index + self.batch_size + 1) {
+        //     // tracing::info!("push ing msg {}", index);
+
+        // }
     }
 
     async fn handle_append_msg(&mut self, msg: RaftMsg) {
@@ -259,15 +282,47 @@ impl Peer {
             return;
         }
         let prev_index = msg.prev_log_index;
-        if let Some(entry) = self.entries.get(&prev_index) {
-            if entry.term != msg.prev_log_term {
-                // reply false
-                self.send_to_peer(fail, msg.replica).await;
-                return;
-            } else {
+        unsafe {
+            if let Some(entry) = self.entries.get(&prev_index) {
+                if entry.term != msg.prev_log_term {
+                    // reply false
+                    self.send_to_peer(fail, msg.replica).await;
+                    return;
+                } else {
+                    let entry_len = msg.entries.len() as i32;
+                    // append
+                    for (index, iter) in msg.entries.into_iter().enumerate() {
+                        self.entries
+                            .insert(msg.prev_log_index + 1 + (index as i32), iter);
+                    }
+
+                    // check commit index
+                    if msg.leader_commit > self.commit_index {
+                        self.commit_index = min(msg.leader_commit, entry_len);
+                    }
+                    // reply success
+                    let success = RaftMsg {
+                        entry_type: RaftMsgType::AppendResponse.into(),
+                        replica: self.id,
+                        prev_log_index: msg.prev_log_index,
+                        prev_log_term: msg.prev_log_term,
+                        term: self.current_term,
+                        entries: Vec::new(),
+                        leader_commit: 0,
+                        success: true,
+                        entry_len: msg.entry_len,
+                    };
+                    self.send_to_peer(success, msg.replica).await;
+                }
+            } else if msg.prev_log_index == 0 {
                 let entry_len = msg.entries.len() as i32;
                 // append
+                // tracing::info!("msg entries len = {}", msg.entries.len());
                 for (index, iter) in msg.entries.into_iter().enumerate() {
+                    // tracing::info!(
+                    //     "insert into entry index{}",
+                    //     msg.prev_log_index + 1 + (index as i32)
+                    // );
                     self.entries
                         .insert(msg.prev_log_index + 1 + (index as i32), iter);
                 }
@@ -289,44 +344,14 @@ impl Peer {
                     entry_len: msg.entry_len,
                 };
                 self.send_to_peer(success, msg.replica).await;
+            } else {
+                // reply false
+                // use prev log index to indicate conflict index
+                // tracing::info!("handle append not found, reply false");
+                fail.prev_log_index = self.entries.len() as i32;
+                self.send_to_peer(fail, msg.replica).await;
+                return;
             }
-        } else if msg.prev_log_index == 0 {
-            let entry_len = msg.entries.len() as i32;
-            // append
-            // tracing::info!("msg entries len = {}", msg.entries.len());
-            for (index, iter) in msg.entries.into_iter().enumerate() {
-                // tracing::info!(
-                //     "insert into entry index{}",
-                //     msg.prev_log_index + 1 + (index as i32)
-                // );
-                self.entries
-                    .insert(msg.prev_log_index + 1 + (index as i32), iter);
-            }
-
-            // check commit index
-            if msg.leader_commit > self.commit_index {
-                self.commit_index = min(msg.leader_commit, entry_len);
-            }
-            // reply success
-            let success = RaftMsg {
-                entry_type: RaftMsgType::AppendResponse.into(),
-                replica: self.id,
-                prev_log_index: msg.prev_log_index,
-                prev_log_term: msg.prev_log_term,
-                term: self.current_term,
-                entries: Vec::new(),
-                leader_commit: 0,
-                success: true,
-                entry_len: msg.entry_len,
-            };
-            self.send_to_peer(success, msg.replica).await;
-        } else {
-            // reply false
-            // use prev log index to indicate conflict index
-            // tracing::info!("handle append not found, reply false");
-            fail.prev_log_index = self.entries.len() as i32;
-            self.send_to_peer(fail, msg.replica).await;
-            return;
         }
     }
 
@@ -364,8 +389,10 @@ impl Peer {
     async fn request_vote(&mut self) {
         let prev_log_index = self.commit_index;
         let mut prev_log_term = 0;
-        if let Some(entry) = self.entries.get(&prev_log_index) {
-            prev_log_term = entry.term;
+        unsafe {
+            if let Some(entry) = self.entries.get(&prev_log_index) {
+                prev_log_term = entry.term;
+            }
         }
         let request_vote = RaftMsg {
             entry_type: RaftMsgType::RequestVote.into(),
@@ -409,7 +436,9 @@ impl Peer {
                 let last_log_index = self.last_log_index;
                 let mut last_log_term = 0;
                 if last_log_index > 0 {
-                    last_log_term = self.entries.get(&last_log_index).unwrap().term;
+                    unsafe {
+                        last_log_term = self.entries.get(&last_log_index).unwrap().term;
+                    }
                 }
                 if msg.prev_log_term < last_log_term {
                     // reply false
@@ -433,7 +462,9 @@ impl Peer {
             let last_log_index = self.last_log_index;
             let mut last_log_term = 0;
             if last_log_index > 0 {
-                last_log_term = self.entries.get(&last_log_index).unwrap().term;
+                unsafe {
+                    last_log_term = self.entries.get(&last_log_index).unwrap().term;
+                }
             }
             if msg.prev_log_term < last_log_term {
                 // reply false
@@ -485,15 +516,18 @@ impl Peer {
         while self.last_applied < self.commit_index {
             self.last_applied += 1;
             // send back to client
-            let client_reply = ClientMsgReply {
-                command_id: self.entries[&self.last_applied]
-                    .msg
-                    .as_ref()
-                    .unwrap()
-                    .command_id,
-                success: true,
-            };
-            self.client_reply.send(client_reply);
+            unsafe {
+                let client_reply = ClientMsgReply {
+                    command_id: self.entries[&self.last_applied]
+                        .msg
+                        .as_ref()
+                        .unwrap()
+                        .command_id,
+                    success: true,
+                };
+                // println!("send back to client {}", client_reply.command_id);
+                self.client_reply.send(client_reply);
+            }
         }
     }
 
@@ -502,7 +536,9 @@ impl Peer {
         self.current_leader = self.id;
         self.state = State::Leader;
         for i in 0..self.peer_num {
-            self.next_index[i as usize] = (self.entries.len() + 1) as i32;
+            unsafe {
+                self.next_index[i as usize] = (self.entries.len() + 1) as i32;
+            }
             self.match_index[i as usize] = 0;
         }
         // set heartbeat timer
@@ -571,10 +607,19 @@ impl Peer {
     async fn init_peer_rpc(
         &mut self,
         sender: UnboundedSender<PeerMsg>,
+        // client_sender: UnboundedSender<PeerMsg>,
         receiver: UnboundedReceiver<ClientMsgReply>,
     ) {
         // init peer rpc
-        let mut listen_ip = self.config.server_addrs.get(&self.id).unwrap().clone();
+        let mut listen_ip = if self.wide_area {
+            self.config
+                .wide_private_server_addr
+                .get(&self.id)
+                .unwrap()
+                .clone()
+        } else {
+            self.config.server_addrs.get(&self.id).unwrap().clone()
+        };
         listen_ip = convert_ip_addr(listen_ip, false);
         info!("server listen ip {}", listen_ip);
         let server = RpcServer::new(listen_ip, sender.clone());
@@ -597,7 +642,14 @@ impl Peer {
             }
         }
         // init propose rpc server
-        let propose_ip = convert_ip_addr(self.config.propose_server_addrs[&self.id].clone(), false);
+        let propose_ip = if self.wide_area {
+            convert_ip_addr(
+                self.config.wide_private_propose_addr[&self.id].clone(),
+                false,
+            )
+        } else {
+            convert_ip_addr(self.config.propose_server_addrs[&self.id].clone(), false)
+        };
         let propose_server = ProposeServer::new(propose_ip, sender, receiver);
         tokio::spawn(async move {
             run_propose_server(propose_server).await;

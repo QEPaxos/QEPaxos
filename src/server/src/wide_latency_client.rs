@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let id = 0;
     println!("id = {}", id_to_connect);
     println!("replica_nums = {}", replica_nums);
-    let config = ServerConfig::new(replica_nums);
+    let config = ServerConfig::new_wide_config();
     let propose_ip = config
         .propose_server_addrs
         .get(&id_to_connect)
@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut keys = key_gen.gen_request(100000, 100);
 
         tokio::spawn(async move {
-            let i = 0;
+            let mut i = 0;
             loop {
                 let msg = ClientMsg {
                     key: keys[i].clone(),
@@ -95,7 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     server_senders[server_id].send(msg.clone()).await;
                     // sender.send(msg).await;
                 }
-                sleep(Duration::from_micros(10)).await;
+                sleep(Duration::from_millis(20)).await;
+                i += 1;
             }
         });
 
@@ -106,7 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let mut result: Vec<u128> = Vec::new();
         println!("try to send msg to leader");
-        for i in 0..100 {
+        sleep(Duration::from_millis(30)).await;
+        for i in 0..200 {
             let start = Instant::now();
             let mut to_send = msg_to_send.clone();
             to_send.command_id = i;
@@ -120,10 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         result.sort();
         // median
-        println!("median = {}", result[49]);
+        println!("median = {}", result[99]);
         // p99
         let mut p99 = 0;
-        for i in 90..100 {
+        for i in 190..200 {
             p99 += result[i];
         }
         println!("p99 = {}", p99 / 10);
@@ -168,7 +170,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     server_senders[server_id].send(msg.clone()).await;
                     // sender.send(msg).await;
                 }
-                sleep(Duration::from_micros(10)).await;
+                sleep(Duration::from_millis(20)).await;
+                i += 1;
             }
         });
 
@@ -179,29 +182,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let mut result: Vec<u128> = Vec::new();
         println!("try to send msg to leader");
-        for i in 0..100 {
+        sleep(Duration::from_millis(30)).await;
+        for i in 0..200 {
             let start = Instant::now();
             let mut to_send = msg_to_send.clone();
             to_send.command_id = i;
             latency_sender.send(to_send).await;
-            loop {
-                if let Some(reply) = result_stream.message().await.unwrap() {
-                    let time = start.elapsed().as_micros();
-                    println!("time = {}-{}", reply.command_id, time);
-                    if time > 100 {
-                        result.push(time);
-                        break;
-                    }
-                }
+            if let Some(reply) = result_stream.message().await.unwrap() {
+                let time = start.elapsed().as_micros();
+                println!("time = {}", time);
+                result.push(time);
             }
         }
 
         result.sort();
         // median
-        println!("median = {}", result[49]);
+        println!("median = {}", result[99]);
         // p99
         let mut p99 = 0;
-        for i in 90..100 {
+        for i in 190..200 {
             p99 += result[i];
         }
         println!("p99 = {}", p99 / 10);

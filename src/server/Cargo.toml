@@ -15,6 +15,10 @@ name = "latency"
 path = "src/latency_client.rs"
 
 [[bin]]
+name = "wide_latency"
+path = "src/wide_latency_client.rs"
+
+[[bin]]
 name = "raft_client"
 path = "src/raft_test_client.rs"
 

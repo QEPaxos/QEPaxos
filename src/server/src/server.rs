@@ -28,8 +28,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = args[1].parse::<i32>().unwrap();
     let server_type = args[2].parse::<String>().unwrap();
     let batch_size = args[3].parse::<usize>().unwrap();
+    let replica_nums = args[4].parse::<i32>().unwrap();
+    let thrifty = args[5].parse::<bool>().unwrap();
+    let wide_area = args[6].parse::<bool>().unwrap();
     tracing::info!("id = {}, server type = {}", id, server_type);
-    let config = ServerConfig::new(3);
+    let config = if wide_area {
+        ServerConfig::new_wide_config()
+    } else {
+        ServerConfig::new(replica_nums)
+    };
     let (sender, receiver) = unbounded_channel::<ClientMsgReply>();
     if server_type.eq_ignore_ascii_case("sepaxos") {
         tracing::info!("starting sepaxos");
@@ -42,6 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sender,
             true,
             batch_size,
+            thrifty,
+            wide_area,
         );
 
         peer.init_and_run(receiver).await;
@@ -56,6 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sender,
             true,
             batch_size,
+            thrifty,
+            wide_area,
         );
 
         peer.init_and_run(receiver).await;
@@ -69,7 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             peer_receiver,
             sender,
             true,
-            1,
+            batch_size,
+            wide_area,
         );
 
         peer.init_and_run(receiver).await;

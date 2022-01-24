@@ -1,6 +1,6 @@
--------------------------- MODULE qepaxos --------------------------
+-------------------------- MODULE QEPaxos --------------------------
 
-EXTENDS Naturals, FiniteSets
+EXTENDS Naturals, Bags, FiniteSets, Sequences, TLC, Integers
 
 -----------------------------------------------------------------------------
 
@@ -12,9 +12,9 @@ EXTENDS Naturals, FiniteSets
 (*       SlowQuorums(r): the set of all slow quorums where r is a command leader *)
 (*********************************************************************************)
 
-CONSTANTS Commands, Replicas, FastQuorums(_), SlowQuorums(_), MaxBallot
+CONSTANTS Commands, Replicas, FQ_Size
 
-ASSUME IsFiniteSet(Replicas)
+ASSUME IsFiniteSet(Replicas)  
 
 (***************************************************************************)
 (* Quorum conditions:                                                      *)
@@ -22,21 +22,12 @@ ASSUME IsFiniteSet(Replicas)
 (***************************************************************************)
 
 \* The set of all quorums. This just calculates simple majorities
-FastQuorum == {i \in SUBSET(Server) : Cardinality(i) = (Cardinality(Replicas) \div 2) + 
-                         ((Cardinality(Replicas) \div 2) + 1) \div 2}
-
-ASSUME \A r \in Replicas:
-  /\ SlowQuorums(r) \subseteq SUBSET Replicas
-  /\ \A SQ \in SlowQuorums(r): 
-    /\ r \in SQ
-    /\ Cardinality(SQ) = (Cardinality(Replicas) \div 2) + 1
-
-\* ASSUME \A r \in Replicas:
-\*   /\ FastQuorums(r) \subseteq SUBSET Replicas
-\*   /\ \A FQ \in FastQuorums(r):
-\*     /\ r \in FQ
-\*     /\ Cardinality(FQ) = (Cardinality(Replicas) \div 2) + 
-\*                          ((Cardinality(Replicas) \div 2) + 1) \div 2
+\*
+\*ASSUME \A r \in Replicas:
+\*  /\ SlowQuorums(r) \subseteq SUBSET Replicas
+\*  /\ \A SQ \in SlowQuorums(r): 
+\*    /\ r \in SQ
+\*    /\ Cardinality(SQ) = (Cardinality(Replicas) \div 2) + 1
     
     
 (***************************************************************************)
@@ -56,7 +47,7 @@ Instances == Replicas \X (1..Cardinality(Commands))
 (* The possible status of a command in the log of a replica.               *)
 (***************************************************************************)
 
-Status == {"not-seen", "pre-accepted", "accepted", "committed"}
+Status == {"not-seen", "pre-accepted", "accepted", "pre-committed", "committed"}
 
 
 (***************************************************************************)
@@ -71,6 +62,9 @@ Message ==
         inst: Instances, ballot: Nat \X Replicas,
         cmd: Commands \cup {none}, deps: SUBSET Instances]
   \cup  [type: {"commit"},
+        inst: Instances, ballot: Nat \X Replicas,
+        cmd: Commands \cup {none}, deps: SUBSET Instances]
+  \cup  [type: {"pre-commit"},
         inst: Instances, ballot: Nat \X Replicas,
         cmd: Commands \cup {none}, deps: SUBSET Instances]
   \cup  [type: {"prepare"}, src: Replicas, dst: Replicas,
@@ -111,7 +105,7 @@ Message ==
 
  
 VARIABLES cmdLog, proposed, executed, sentMsg, crtInst, leaderOfInst,
-          committed, ballots, preparing
+          committed, ballots, preparing, quorum
 
 TypeOK ==
     /\ cmdLog \in [Replicas -> SUBSET [inst: Instances, 
@@ -121,7 +115,7 @@ TypeOK ==
                                        deps: SUBSET Instances]]
     /\ proposed \in SUBSET Commands
     /\ executed \in [Replicas -> SUBSET (Nat \X Commands)]
-    /\ sentMsg \in SUBSET Message
+\*    /\ sentMsg \in SUBSET Message
     /\ crtInst \in [Replicas -> Nat]
     /\ leaderOfInst \in [Replicas -> SUBSET Instances]
     /\ committed \in [Instances -> SUBSET ((Commands \cup {none}) \X
@@ -131,7 +125,7 @@ TypeOK ==
     /\ preparing \in [Replicas -> SUBSET Instances]
     
 vars == << cmdLog, proposed, executed, sentMsg, crtInst, leaderOfInst, 
-           committed, ballots, preparing >>
+           committed, ballots, preparing, quorum>>
 
 (***************************************************************************)
 (* Initial state predicate                                                 *)
@@ -145,8 +139,9 @@ Init ==
   /\ crtInst = [r \in Replicas |-> 1]
   /\ leaderOfInst = [r \in Replicas |-> {}]
   /\ committed = [i \in Instances |-> {}]
-  /\ ballots = [r \in Replicas |-> 1]
+  /\ ballots = 0
   /\ preparing = [r \in Replicas |-> {}]
+  /\ quorum = Replicas
 
 
 
@@ -154,7 +149,7 @@ Init ==
 (* Actions                                                                 *)
 (***************************************************************************)
 
-StartPhase1(C, cleader, Q, inst, ballot, oldMsg) ==                                                
+StartPhase1(C, cleader, inst, ballot, oldMsg) ==                                                
     LET newDeps == {rec.inst: rec \in cmdLog[cleader]} 
         oldRecs == {rec \in cmdLog[cleader] : rec.inst = inst} IN
         /\ cmdLog' = [cmdLog EXCEPT ![cleader] = (@ \ oldRecs) \cup 
@@ -167,23 +162,23 @@ StartPhase1(C, cleader, Q, inst, ballot, oldMsg) ==
         /\ sentMsg' = (sentMsg \ oldMsg) \cup 
                                 [type  : {"pre-accept"},
                                   src   : {cleader},
-                                  dst   : Q \ {cleader},
+                                  dst   : quorum \ {cleader},
                                   inst  : {inst},
                                   ballot: {ballot},
                                   cmd   : {C},
                                   deps  : {newDeps}]
+         
 
 Propose(C, cleader) ==
     LET newInst == <<cleader, crtInst[cleader]>> 
-        newBallot == <<ballots[cleader], cleader>> 
+        newBallot == <<ballots, cleader>> 
     IN  /\ proposed' = proposed \cup {C}
-        /\ (\E Q \in FastQuorums(cleader):
-                 StartPhase1(C, cleader, Q, newInst, newBallot, {}))
+        /\ StartPhase1(C, cleader, newInst, newBallot, {})
         /\ crtInst' = [crtInst EXCEPT ![cleader] = @ + 1]
-        /\ UNCHANGED << executed, committed, ballots, preparing >>
+        /\ UNCHANGED << executed, committed, ballots, preparing, quorum >>
 
 Phase1Reply(replica) ==
-    \E msg \in sentMsg:
+    /\ \E msg \in sentMsg:
         /\ msg.type = "pre-accept"
         /\ msg.dst = replica
         /\ LET oldRec == {rec \in cmdLog[replica]: rec.inst = msg.inst} IN
@@ -192,7 +187,8 @@ Phase1Reply(replica) ==
             /\ LET newDeps == msg.deps \cup 
                             ({t.inst: t \in cmdLog[replica]} \ {msg.inst})
                    instCom == {t.inst: t \in {tt \in cmdLog[replica] :
-                              tt.status \in {"committed", "executed"}}} IN
+                              tt.status \in {"committed", "pre-committed","executed"}}} IN
+\*                /\ Print("try to reply phase 1",TRUE)
                 /\ cmdLog' = [cmdLog EXCEPT ![replica] = (@ \ oldRec) \cup
                                     {[inst   |-> msg.inst,
                                       status |-> "pre-accepted",
@@ -208,64 +204,63 @@ Phase1Reply(replica) ==
                                       deps  |-> newDeps,
                                       committed|-> instCom]}
                 /\ UNCHANGED << proposed, crtInst, executed, leaderOfInst,
-                                committed, ballots, preparing >>
+                                committed, ballots, preparing, quorum >>
                                         
-Phase1Fast(cleader, i, Q) ==
+Phase1Fast(cleader, i) ==
     /\ i \in leaderOfInst[cleader]
-    \* /\ Q \in FastQuorums(cleader)
     /\ \E record \in cmdLog[cleader]:
         /\ record.inst = i
         /\ record.status = "pre-accepted"
-        /\ record.ballot[1] = 0
+        /\ record.ballot[1] = ballots
         /\ LET replies == {msg \in sentMsg: 
                                 /\ msg.inst = i
                                 /\ msg.type = "pre-accept-reply"
                                 /\ msg.dst = cleader
-                                /\ msg.src \in Q
-                                /\ msg.ballot = record.ballot} \cup record
+                                /\ msg.src \in Replicas
+                                /\ msg.ballot = record.ballot}
                                 IN
             /\ (\A replica \in (Replicas \ {cleader}): 
                     \E msg \in replies: msg.src = replica)
             /\ LET r == CHOOSE r \in replies : TRUE IN
                 /\ LET localCom == {t.inst:
                             t \in {tt \in cmdLog[cleader] : 
-                                 tt.status \in {"committed", "executed", "acceptted"}}}
+                                 tt.status \in {"committed", "pre-committed","executed", "acceptted"}}}
                         allDeps == UNION {msg.deps : msg \in replies}
-                        finalDeps == {inst \in allDeps : \E Q in FastQuorum : \A replica in Q : 
-                                                \E msg in replies : (msg.src = replica /\ inst \in msg.dep)}          
+                        sum(x) == {msg \in replies : x \in msg.deps}
+                        finalDeps == {inst \in allDeps : Cardinality(sum(inst)) >= FQ_Size}          
                         
                        extCom == UNION {msg.committed: msg \in replies} IN
                        (r.deps \subseteq (localCom \cup extCom))
                 /\ cmdLog' = [cmdLog EXCEPT ![cleader] = (@ \ {record}) \cup 
                                         {[inst   |-> i,
-                                          status |-> "committed",
+                                          status |-> "pre-committed",
                                           ballot |-> record.ballot,
                                           cmd    |-> record.cmd,
                                           deps   |-> r.deps]}]
                 /\ sentMsg' = (sentMsg \ replies) \cup
-                            {[type  |-> "commit",
+                            {[type  |-> "pre-commit",
                             inst    |-> i,
                             ballot  |-> record.ballot,
                             cmd     |-> record.cmd,
                             deps    |-> r.deps]}
                 /\ leaderOfInst' = [leaderOfInst EXCEPT ![cleader] = @ \ {i}]
                 /\ committed' = [committed EXCEPT ![i] = 
-                                            @ \cup {<<record.cmd, r.deps>>}]
-                /\ UNCHANGED << proposed, executed, crtInst, ballots, preparing >>
+                                            @ \cup {<<record>>}]
+                /\ UNCHANGED << proposed, executed, crtInst, ballots, preparing, quorum >>
                                         
-Phase1Slow(cleader, i, Q) ==
+Phase1Slow(cleader, i) ==
     /\ i \in leaderOfInst[cleader]
-    /\ Q \in SlowQuorums(cleader)
     /\ \E record \in cmdLog[cleader]:
         /\ record.inst = i
         /\ record.status = "pre-accepted"
+        /\ record.ballot[1] = ballots
         /\ LET replies == {msg \in sentMsg: 
                                 /\ msg.inst = i 
                                 /\ msg.type = "pre-accept-reply" 
                                 /\ msg.dst = cleader 
-                                /\ msg.src \in Q
+                                /\ msg.src \in quorum
                                 /\ msg.ballot = record.ballot} IN
-            /\ (\A replica \in (Q \ {cleader}): \E msg \in replies: msg.src = replica)
+            /\ (\A replica \in (quorum \ {cleader}): \E msg \in replies: msg.src = replica)
             /\ LET finalDeps == UNION {msg.deps : msg \in replies} IN    
                 /\ cmdLog' = [cmdLog EXCEPT ![cleader] = (@ \ {record}) \cup 
                                         {[inst   |-> i,
@@ -273,22 +268,22 @@ Phase1Slow(cleader, i, Q) ==
                                           ballot |-> record.ballot,
                                           cmd    |-> record.cmd,
                                           deps   |-> finalDeps ]}]
-                /\ \E SQ \in SlowQuorums(cleader):
-                   (sentMsg' = (sentMsg \ replies) \cup
+                /\ (sentMsg' = (sentMsg \ replies) \cup
                             [type : {"accept"},
                             src : {cleader},
-                            dst : SQ \ {cleader},
+                            dst : quorum \ {cleader},
                             inst : {i},
                             ballot: {record.ballot},
                             cmd : {record.cmd},
                             deps : {finalDeps}])
                 /\ UNCHANGED << proposed, executed, crtInst, leaderOfInst,
-                                committed, ballots, preparing >>
+                                committed, ballots, preparing, quorum >>
 
 AcceptReply(replica) ==
     \E msg \in sentMsg: 
         /\ msg.type = "accept"
         /\ msg.dst = replica
+        /\ msg.ballot[1] = ballots
         /\ LET oldRec == {rec \in cmdLog[replica]: rec.inst = msg.inst} IN
             /\ (\A rec \in oldRec: (rec.ballot = msg.ballot \/ 
                                     rec.ballot[1] < msg.ballot[1]))
@@ -305,11 +300,10 @@ AcceptReply(replica) ==
                                   inst  |-> msg.inst,
                                   ballot|-> msg.ballot]}
             /\ UNCHANGED << proposed, crtInst, executed, leaderOfInst,
-                            committed, ballots, preparing >>
+                            committed, ballots, preparing, quorum >>
 
-AcceptFinalize(cleader, i, Q) ==
+AcceptFinalize(cleader, i) ==
     /\ i \in leaderOfInst[cleader]
-    /\ Q \in SlowQuorums(cleader)
     /\ \E record \in cmdLog[cleader]:
         /\ record.inst = i
         /\ record.status = "accepted"
@@ -317,9 +311,9 @@ AcceptFinalize(cleader, i, Q) ==
                                 /\ msg.inst = i 
                                 /\ msg.type = "accept-reply" 
                                 /\ msg.dst = cleader 
-                                /\ msg.src \in Q 
+                                /\ msg.src \in quorum 
                                 /\ msg.ballot = record.ballot} IN
-            /\ (\A replica \in (Q \ {cleader}): \E msg \in replies: 
+            /\ (\A replica \in (quorum \ {cleader}): \E msg \in replies: 
                                                         msg.src = replica)
             /\ cmdLog' = [cmdLog EXCEPT ![cleader] = (@ \ {record}) \cup 
                                     {[inst   |-> i,
@@ -334,9 +328,9 @@ AcceptFinalize(cleader, i, Q) ==
                         cmd     |-> record.cmd,
                         deps    |-> record.deps]}
             /\ committed' = [committed EXCEPT ![i] = @ \cup 
-                               {<<record.cmd, record.deps>>}]
+                               {<<record>>}]
             /\ leaderOfInst' = [leaderOfInst EXCEPT ![cleader] = @ \ {i}]
-            /\ UNCHANGED << proposed, executed, crtInst, ballots, preparing >>                                                                    
+            /\ UNCHANGED << proposed, executed, crtInst, ballots, preparing, quorum >>                                                                    
                                 
 Commit(replica, cmsg) ==
     LET oldRec == {rec \in cmdLog[replica] : rec.inst = cmsg.inst} IN
@@ -349,10 +343,24 @@ Commit(replica, cmsg) ==
                                       cmd      |-> cmsg.cmd,
                                       deps     |-> cmsg.deps]}]
         /\ committed' = [committed EXCEPT ![cmsg.inst] = @ \cup 
-                               {<<cmsg.cmd, cmsg.deps>>}]
+                               {<<cmsg>>}]
         /\ UNCHANGED << proposed, executed, crtInst, leaderOfInst,
-                        sentMsg, ballots, preparing >>
-                                
+                        sentMsg, ballots, preparing, quorum >>
+
+PreCommit(replica, cmsg) ==
+    LET oldRec == {rec \in cmdLog[replica] : rec.inst = cmsg.inst} IN
+        /\ \A rec \in oldRec : (rec.status \notin {"committed", "pre-committed", "executed"} /\ 
+                                rec.ballot[1] <= cmsg.ballot[1])
+        /\ cmdLog' = [cmdLog EXCEPT ![replica] = (@ \ oldRec) \cup 
+                                    {[inst     |-> cmsg.inst,
+                                      status   |-> "pre-committed",
+                                      ballot   |-> cmsg.ballot,
+                                      cmd      |-> cmsg.cmd,
+                                      deps     |-> cmsg.deps]}]
+        /\ committed' = [committed EXCEPT ![cmsg.inst] = @ \cup 
+                               {<<cmsg>>}]
+        /\ UNCHANGED << proposed, executed, crtInst, leaderOfInst,
+                        sentMsg, ballots, preparing, quorum >>                                
                                 
                                 
                                 
@@ -360,23 +368,22 @@ Commit(replica, cmsg) ==
 (* Recovery actions                                                        *)
 (***************************************************************************)
  
-SendPrepare(replica, i, Q) ==
+SendPrepare(replica, i) ==
     /\ i \notin leaderOfInst[replica]
-    \*/\ i \notin preparing[replica]
-    /\ ballots[replica] <= MaxBallot
-    /\ ~(\E rec \in cmdLog[replica] :
-                        /\ rec.inst = i
-                        /\ rec.status \in {"committed", "executed"})
-    /\ sentMsg' = sentMsg \cup
-                    [type   : {"prepare"},
-                     src    : {replica},
-                     dst    : Q,
-                     inst   : {i},
-                     ballot : {<< ballots, replica >>}]
+    /\ \E rec \in cmdLog[replica] : rec.inst = i
+    /\ LET rec == CHOOSE r \in cmdLog[replica] : r.inst = i IN
+               /\ rec.status \in {"committed", "executed"}
+               /\ sentMsg' = sentMsg \cup
+                            [type   : {"prepare"},
+                             src    : {replica},
+                             dst    : quorum,
+                             inst   : {i},
+                             cmd    : {rec.cmd},
+                             ballot : {<< ballots, replica >>}]
     /\ ballots' = ballots + 1
     /\ preparing' = [preparing EXCEPT ![replica] = @ \cup {i}]
     /\ UNCHANGED << cmdLog, proposed, executed, crtInst,
-                    leaderOfInst, committed >>
+                    leaderOfInst, committed, quorum >>
 
 
 ReplyPrepare(replica) ==
@@ -406,35 +413,37 @@ ReplyPrepare(replica) ==
                         /\ leaderOfInst' = [leaderOfInst EXCEPT ![replica] = 
                                                                 @ \ {rec.inst}]
                         /\ UNCHANGED << proposed, executed, committed,
-                                        crtInst, ballots, preparing >>
+                                        crtInst, ballots, preparing, quorum >>
                     ELSE UNCHANGED << proposed, executed, committed, crtInst,
-                                      ballots, preparing, leaderOfInst >>
+                                      ballots, preparing, leaderOfInst, quorum >>
                         
            \/ /\ ~(\E rec \in cmdLog[replica] : rec.inst = msg.inst)
-              /\ sentMsg' = (sentMsg \ {msg}) \cup
+              /\ LET newDeps == msg.deps \cup 
+                            ({t.inst: t \in cmdLog[replica]} \ {msg.inst}) IN
+                    /\ sentMsg' = (sentMsg \ {msg}) \cup
                             {[type  |-> "prepare-reply",
                               src   |-> replica,
                               dst   |-> msg.src,
                               inst  |-> msg.inst,
                               ballot|-> msg.ballot,
                               prev_ballot|-> << 0, replica >>,
-                              status|-> "not-seen",
-                              cmd   |-> none,
-                              deps  |-> {}]}
-              /\ cmdLog' = [cmdLog EXCEPT ![replica] = @ \cup
+                              status|-> "prepare",
+                              cmd   |-> msg.cmd,
+                              deps  |-> newDeps]}
+                    /\ cmdLog' = [cmdLog EXCEPT ![replica] = (@) \cup
                             {[inst  |-> msg.inst,
-                              status|-> "not-seen",
+                              status|-> msg.status,
                               ballot|-> msg.ballot,
-                              cmd   |-> none,
-                              deps  |-> {}]}]
-              /\ UNCHANGED << proposed, executed, committed, crtInst, ballots,
-                              leaderOfInst, preparing >> 
+                              cmd   |-> msg.cmd,
+                              deps  |-> newDeps]}]
+                    /\ UNCHANGED << proposed, executed, committed, crtInst, ballots,
+                              leaderOfInst, preparing, quorum >> 
 
                                 
 
 
 \* handle prepare reply,  
-PrepareFinalize(replica, i, Q) ==
+PrepareFinalize(replica, i) ==
     /\ i \in preparing[replica]
     /\ \E rec \in cmdLog[replica] :
        /\ rec.inst = i
@@ -443,24 +452,25 @@ PrepareFinalize(replica, i, Q) ==
                         /\ msg.inst = i
                         /\ msg.type = "prepare-reply"
                         /\ msg.dst = replica
-                        /\ msg.ballot = rec.ballot} IN
-            /\ (\A rep \in Q : \E msg \in replies : msg.src = rep)  //收到一个quorum的reply
-            /\  \/ \E com \in replies :                                     //如果committed，退出恢复
-                        /\ (com.status \in {"committed", "executed"})
+                        /\ msg.ballot = rec.ballot} IN 
+            /\ (\A rep \in quorum : \E msg \in replies : msg.src = rep)
+            /\  \/ \E com \in replies :
+                        /\ (com.status \in {"executed"})
                         /\ preparing' = [preparing EXCEPT ![replica] = @ \ {i}]
                         /\ sentMsg' = sentMsg \ replies
                         /\ UNCHANGED << cmdLog, proposed, executed, crtInst, leaderOfInst,
-                                        committed, ballots >>
-                \/ /\ ~(\E msg \in replies : msg.status \in {"committed", "executed"})
-                   /\ \E acc \in replies :                                               //accept
-                        /\ acc.status = "accepted"
+                                        committed, ballots, quorum >>
+                \/ /\ ~(\E msg \in replies : msg.status \in {"executed"})
+                   /\ \E acc \in replies :
+                        /\ \/ acc.status = "accepted"
+                           \/ acc.status = "committed"
                         /\ (\A msg \in (replies \ {acc}) : 
                             (msg.prev_ballot[1] <= acc.prev_ballot[1] \/ 
                              msg.status # "accepted"))
                         /\ sentMsg' = (sentMsg \ replies) \cup
                                  [type  : {"accept"},
                                   src   : {replica},
-                                  dst   : Q \ {replica},
+                                  dst   : quorum \ {replica},
                                   inst  : {i},
                                   ballot: {rec.ballot},
                                   cmd   : {acc.cmd},
@@ -473,36 +483,41 @@ PrepareFinalize(replica, i, Q) ==
                                   deps  |-> acc.deps]}]
                          /\ preparing' = [preparing EXCEPT ![replica] = @ \ {i}]
                          /\ leaderOfInst' = [leaderOfInst EXCEPT ![replica] = @ \cup {i}]
-                         /\ UNCHANGED << proposed, executed, crtInst, committed, ballots >>
+                         /\ UNCHANGED << proposed, executed, crtInst, committed, ballots, quorum >>
                 \/ /\ ~(\E msg \in replies : 
                         msg.status \in {"accepted", "committed", "executed"})
-                   /\ LET preaccepts == {msg \in replies : msg.status = "pre-accepted"} IN
-                        /\ \A p1, p2 \in preaccepts :
-                                p1.cmd = p2.cmd /\ p1.deps = p2.deps
-                        /\ ~(\E pl \in preaccepts : pl.src = i[1])
-                        /\ LET pac == CHOOSE pac \in preaccepts : TRUE IN
-                                /\ sentMsg' = (sentMsg \ replies) \cup
+                   /\ LET preaccepts == {msg \in replies : msg.status = "pre-accepted" \/ msg.status = "prepared"} IN
+\*                        /\ \A p1, p2 \in preaccepts :
+\*                                p1.cmd = p2.cmd /\ p1.deps = p2.deps
+\*                        /\ ~(\E pl \in preaccepts : pl.src = i[1])
+                        /\ LET allDeps == UNION {msg.deps : msg \in replies} 
+                                  sum(x) == {msg \in replies : x \in msg.deps}
+                                  finalDeps == {inst \in allDeps : Cardinality(sum(inst)) >= (BagCardinality(quorum) \div 2)} IN
+                            \/ /\ \E inst \in allDeps : inst[2] \in quorum /\ cmdLog[inst[2]][inst[1]].status /= "committed"
+                               /\ UNCHANGED << cmdLog, proposed, executed, sentMsg, crtInst, leaderOfInst, committed, ballots, preparing, quorum>>
+                            \/ LET pac == CHOOSE pac \in preaccepts : TRUE IN
+                               /\ sentMsg' = (sentMsg \ replies) \cup
                                          [type  : {"accept"},
                                           src   : {replica},
-                                          dst   : Q \ {replica},
+                                          dst   : quorum \ {replica},
                                           inst  : {i},
                                           ballot: {rec.ballot},
                                           cmd   : {pac.cmd},
                                           deps  : {pac.deps}]
-                                /\ cmdLog' = [cmdLog EXCEPT ![replica] = (@ \ {rec}) \cup
+                               /\ cmdLog' = [cmdLog EXCEPT ![replica] = (@ \ {rec}) \cup
                                         {[inst  |-> i,
                                           status|-> "accepted",
                                           ballot|-> rec.ballot,
                                           cmd   |-> pac.cmd,
                                           deps  |-> pac.deps]}]
-                                /\ preparing' = [preparing EXCEPT ![replica] = @ \ {i}]
-                                /\ leaderOfInst' = [leaderOfInst EXCEPT ![replica] = @ \cup {i}]
-                                /\ UNCHANGED << proposed, executed, crtInst, committed, ballots >>
-                        
-                \/  /\ \A msg \in replies : msg.status = "not-seen"                             //所有的都not seen
-                    /\ StartPhase1(none, replica, Q, i, rec.ballot, replies)
+                               /\ preparing' = [preparing EXCEPT ![replica] = @ \ {i}]
+                               /\ leaderOfInst' = [leaderOfInst EXCEPT ![replica] = @ \cup {i}]
+                               /\ UNCHANGED << proposed, executed, crtInst, committed, ballots, quorum >>
+                         
+                \/  /\ \A msg \in replies : msg.status = "not-seen"
+                    /\ StartPhase1(none, replica, i, rec.ballot, replies)
                     /\ preparing' = [preparing EXCEPT ![replica] = @ \ {i}]
-                    /\ UNCHANGED << proposed, executed, crtInst, committed, ballots >>
+                    /\ UNCHANGED << proposed, executed, crtInst, committed, ballots, quorum >>
                                 
 
 
@@ -511,23 +526,38 @@ PrepareFinalize(replica, i, Q) ==
 (***************************************************************************)        
 
 CommandLeaderAction ==
-    \/ (\E C \in (Commands \ proposed) :
-            \E cleader \in Replicas : Propose(C, cleader))
-    \/ (\E cleader \in Replicas : \E inst \in leaderOfInst[cleader] :
-            \/ (\E Q \in FastQuorums(cleader) : Phase1Fast(cleader, inst, Q))
-            \/ (\E Q \in SlowQuorums(cleader) : Phase1Slow(cleader, inst, Q))
-            \/ (\E Q \in SlowQuorums(cleader) : AcceptFinalize(cleader, inst, Q))
+    \/ \E C \in (Commands \ proposed) :
+            \E cleader \in Replicas : Propose(C, cleader)
+    \/ \E cleader \in Replicas : \E inst \in leaderOfInst[cleader] :
+            \/ Phase1Fast(cleader, inst) /\ Cardinality(quorum) = Cardinality(Replicas)
+            \/ Phase1Slow(cleader, inst) /\ Cardinality(quorum) < Cardinality(Replicas)
+            \/ AcceptFinalize(cleader, inst)
             
 ReplicaAction ==
     \E replica \in Replicas :
-        (\/ Phase1Reply(replica)
+         \/ Phase1Reply(replica)
          \/ AcceptReply(replica)
+         \/ \E cmsg \in sentMsg : (cmsg.type = "pre-commit" /\ PreCommit(replica, cmsg))
          \/ \E cmsg \in sentMsg : (cmsg.type = "commit" /\ Commit(replica, cmsg))
          \/ \E i \in Instances : 
             /\ crtInst[i[1]] > i[2] (* This condition states that the instance has *) 
                                     (* been started by its original owner          *)
-            /\ \E Q \in SlowQuorums(replica) : SendPrepare(replica, i, Q)
+            /\ SendPrepare(replica, i)
          \/ ReplyPrepare(replica)
+
+Fail(replica) == /\ replica \in quorum
+                    /\ Cardinality(quorum) > (Cardinality(Replicas) \div 2) + 2
+                    /\ quorum' = quorum \ {replica}
+                    /\ ballots' = ballots + 1  
+                    /\ UNCHANGED << cmdLog, proposed, executed, sentMsg, crtInst, leaderOfInst, 
+                                        committed, preparing>>
+
+Restart(replica) == /\ replica \notin quorum
+                    /\ quorum' = quorum \cup {replica}
+                    /\ ballots' = ballots + 1
+                    /\ UNCHANGED << cmdLog, proposed, executed, sentMsg, crtInst, leaderOfInst, 
+                                        committed, preparing>>
+      
 
 
 (***************************************************************************)
@@ -537,6 +567,8 @@ ReplicaAction ==
 Next == 
     \/ CommandLeaderAction
     \/ ReplicaAction
+    \/ \E i \in Replicas : Fail(i)
+    \/ \E i \in Replicas : Restart(i)
 
 
 (***************************************************************************)
@@ -568,7 +600,8 @@ Stability ==
 
 Consistency ==
     \A i \in Instances :
-        LET x == committed[i] : \A dep in committed[i].deps : committed[dep].ballot <= committed[i].ballot IN
+        LET x == {msg \in committed[i] : \A dep \in msg.deps : committed[dep].ballot <= msg.ballot} IN
         [](Cardinality(x) <= 1)
 
 THEOREM Spec => ([]TypeOK) /\ Nontriviality /\ Stability /\ Consistency
+=============================================================================

@@ -17,6 +17,7 @@ use rpc::sepaxos_rpc::ClientMsgReply;
 // logs matrix
 pub static mut LOGS: Vec<Vec<Option<LogEntry>>> = Vec::new();
 pub static mut EXECUTED_UP_TO: Vec<i32> = Vec::new();
+pub static mut CRT_INSTANCE: Vec<i32> = Vec::new();
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
@@ -56,13 +57,16 @@ pub struct Peer {
     peer_num: usize,
     deps: HashMap<String, Vec<i32>>,
     commited_up_to: Vec<i32>,
-    crt_instance: Vec<i32>,
+    // crt_instance: Vec<i32>,
     instance: i32,
     sender_to_self: UnboundedSender<PeerMsg>,
     receiver: UnboundedReceiver<PeerMsg>,
     // used to init peer rpc
     peer_addrs: HashMap<i32, String>,
-    propose_addr: String,
+    propose_addr: HashMap<i32, String>,
+    wide_area: bool,
+    wide_peer_addr: HashMap<i32, String>,
+    wide_propose_addr: HashMap<i32, String>,
     //sender to peer
     peer_senders: HashMap<i32, Sender<Msg>>,
 
@@ -84,6 +88,7 @@ impl Peer {
         execute: bool,
         batch_size: usize,
         thrifty: bool,
+        wide_area: bool,
     ) -> Self {
         Self {
             id,
@@ -96,17 +101,20 @@ impl Peer {
             deps: HashMap::new(),
             test_msg_count_per_server: config.test_msg_count_per_server,
             commited_up_to: vec![0; config.peer_num],
-            crt_instance: vec![0; config.peer_num],
+            // crt_instance: vec![0; config.peer_num],
             instance: 0,
             sender_to_self: sender,
             receiver,
             peer_addrs: config.server_addrs,
-            propose_addr: config.propose_server_addrs.get(&id).unwrap().clone(),
+            propose_addr: config.propose_server_addrs.clone(),
+            wide_peer_addr: config.wide_private_server_addr.clone(),
+            wide_propose_addr: config.wide_private_propose_addr.clone(),
             peer_senders: HashMap::new(),
             client_senders,
             execute,
             batch_size,
             batch_request: Vec::new(),
+            wide_area,
         }
     }
 
@@ -114,7 +122,7 @@ impl Peer {
         // init global logs
         unsafe {
             LOGS = vec![vec![None; self.test_msg_count_per_server]; self.peer_num];
-
+            CRT_INSTANCE = vec![1; self.peer_num];
             EXECUTED_UP_TO = vec![1; self.peer_num];
         }
         // init rpc
@@ -126,7 +134,7 @@ impl Peer {
             let mut exec = ExecEngine::new(
                 self.client_senders.clone(),
                 self.peer_num,
-                100,
+                100000,
                 self.id as usize,
             );
             spawn_blocking(move || exec.run());
@@ -191,7 +199,10 @@ impl Peer {
         if self.batch_request.len() == self.batch_size {
             let instance = self.instance + 1;
             self.instance += 1;
-            self.crt_instance[self.id as usize] += 1;
+            unsafe {
+                CRT_INSTANCE[self.id as usize] += 1;
+            }
+            // self.crt_instance[self.id as usize] += 1;
             let mut deps: Vec<i32> = vec![0; self.peer_num];
             deps[self.id as usize] = instance - 1;
             let commands = self.batch_request.clone();
@@ -225,10 +236,13 @@ impl Peer {
     async fn process_preaccept(&mut self, msg: Msg) {
         let replica = msg.replica;
         let instance = msg.instance;
-        if self.crt_instance[replica as usize] < instance {
-            self.crt_instance[replica as usize] = instance;
-        }
+        // if self.crt_instance[replica as usize] < instance {
+        //     self.crt_instance[replica as usize] = instance;
+        // }
         unsafe {
+            if CRT_INSTANCE[replica as usize] < instance {
+                CRT_INSTANCE[replica as usize] = instance;
+            }
             let entry_option = LOGS[replica as usize][instance as usize].as_mut();
             match entry_option {
                 Some(entry) => {
@@ -239,8 +253,10 @@ impl Peer {
                     }
                 }
                 None => {
-                    if instance >= self.crt_instance[replica as usize] {
-                        self.crt_instance[replica as usize] = instance + 1;
+                    unsafe {
+                        if instance >= CRT_INSTANCE[replica as usize] {
+                            CRT_INSTANCE[replica as usize] = instance + 1;
+                        }
                     }
                     // insert into logs
                     let entry = LogEntry::new(Vec::new(), LogStatus::PreAccepted, msg.clone());
@@ -287,7 +303,9 @@ impl Peer {
                 }
                 if conflict {
                     // commit at slow path
-                    // println!("conflict send accept");
+                    if self.id == 0 {
+                        // println!("conflict send accept{}", msg.commands[0].command_id);
+                    }
                     log_entry.status = LogStatus::Accepted;
                     let mut accept_msg = log_entry.msg.clone();
                     accept_msg.entry_type = MsgType::Accept.into();
@@ -307,6 +325,8 @@ impl Peer {
                             };
                             if let Err(e) = self.client_senders.send(rsp) {
                                 println!("send client reply channel error {}", e);
+                            } else {
+                                // println!("send client reply {}", iter.command_id);
                             }
                         }
                     }
@@ -317,8 +337,10 @@ impl Peer {
     }
 
     async fn process_accept(&mut self, msg: Msg) {
-        if self.crt_instance[msg.replica as usize] < msg.instance {
-            self.crt_instance[msg.replica as usize] = msg.instance + 1;
+        unsafe {
+            if CRT_INSTANCE[msg.replica as usize] < msg.instance {
+                CRT_INSTANCE[msg.replica as usize] = msg.instance + 1;
+            }
         }
         // update deps
 
@@ -377,6 +399,8 @@ impl Peer {
                         };
                         if let Err(e) = self.client_senders.send(rsp) {
                             println!("send client reply channel error {}", e);
+                        } else {
+                            // println!("send client reply {}", iter.command_id);
                         }
                     }
                 }
@@ -387,8 +411,10 @@ impl Peer {
     }
 
     fn process_commit(&mut self, msg: Msg) {
-        if self.crt_instance[msg.replica as usize] < msg.instance {
-            self.crt_instance[msg.replica as usize] = msg.instance;
+        unsafe {
+            if CRT_INSTANCE[msg.replica as usize] < msg.instance {
+                CRT_INSTANCE[msg.replica as usize] = msg.instance;
+            }
         }
         // update deps
         for kv in msg.commands.iter() {
@@ -456,9 +482,19 @@ impl Peer {
     }
 
     async fn broadcast_to_peers(&self, msg: &Msg) {
-        for (_to, sender) in self.peer_senders.iter() {
-            let send_msg = msg.clone();
-            sender.send(send_msg).await;
+        if self.thrifty {
+            for replica in self.preferred_peer.iter() {
+                self.peer_senders
+                    .get(replica)
+                    .unwrap()
+                    .send(msg.clone())
+                    .await;
+            }
+        } else {
+            for (_to, sender) in self.peer_senders.iter() {
+                let send_msg = msg.clone();
+                sender.send(send_msg).await;
+            }
         }
     }
 
@@ -689,58 +725,59 @@ impl Peer {
         }
     }
 
-    fn find_preaccept_deps(&mut self, msg: &Msg) {
-        if let Some(entry) = self.logs[msg.replica as usize].get(&msg.instance) {
-            if entry.msg.commands.len() > 0 {
-                if entry.status >= LogStatus::Accepted {
-                    return;
-                }
-                if entry.msg.deps == msg.deps {
-                    // already preaccepted
-                    return;
-                }
-            }
-            for i in 0..(self.peer_num - 1) {
-                for instance in self.executed_up_to[i]..self.crt_instance[i] {
-                    if instance == msg.instance && i == msg.replica as usize {
-                        // no need to check past instance in replica's row
-                        break;
-                    }
-                    if instance == msg.deps[i as usize] {
-                        continue;
-                    }
-                    match self.logs[i as usize].get(&instance) {
-                        Some(conflict_entry) => {
-                            if conflict_entry.msg.commands.len() == 0 {
-                                continue;
-                            } else if conflict_entry.msg.deps[msg.replica as usize] >= msg.instance
-                            {
-                                continue;
-                            } else if conflict_commands(&conflict_entry.msg.commands, &msg.commands)
-                            {
-                                // if find a conflict
-                            }
-                        }
-                        None => {
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // fn find_preaccept_deps(&mut self, msg: &Msg) {
+    //     if let Some(entry) = self.logs[msg.replica as usize].get(&msg.instance) {
+    //         if entry.msg.commands.len() > 0 {
+    //             if entry.status >= LogStatus::Accepted {
+    //                 return;
+    //             }
+    //             if entry.msg.deps == msg.deps {
+    //                 // already preaccepted
+    //                 return;
+    //             }
+    //         }
+    //         for i in 0..(self.peer_num - 1) {
+    //             for instance in self.executed_up_to[i]..self.crt_instance[i] {
+    //                 if instance == msg.instance && i == msg.replica as usize {
+    //                     // no need to check past instance in replica's row
+    //                     break;
+    //                 }
+    //                 if instance == msg.deps[i as usize] {
+    //                     continue;
+    //                 }
+    //                 // match self.logs[i as usize].get(&instance) {
+    //                 //     Some(conflict_entry) => {
+    //                 //         if conflict_entry.msg.commands.len() == 0 {
+    //                 //             continue;
+    //                 //         } else if conflict_entry.msg.deps[msg.replica as usize] >= msg.instance
+    //                 //         {
+    //                 //             continue;
+    //                 //         }
+    //                 //         // } else if conflict_commands(&conflict_entry.msg.commands, &msg.commands)
+    //                 //         // {
+    //                 //         //     // if find a conflict
+    //                 //         // }
+    //                 //     }
+    //                 //     None => {
+    //                 //         continue;
+    //                 //     }
+    //                 // }
+    //             }
+    //         }
+    //     }
+    // }
 
-    fn handle_try_preaccept(&mut self, msg: Msg) {
-        let replica = msg.replica;
-        let instance = msg.instance;
-        let to = msg.from;
-        match self.logs[replica as usize].get_mut(&instance) {
-            Some(entry) => if entry.msg.commands.len() == 0 {},
-            None => {
-                // insert new entry
-            }
-        }
-    }
+    // fn handle_try_preaccept(&mut self, msg: Msg) {
+    //     let replica = msg.replica;
+    //     let instance = msg.instance;
+    //     let to = msg.from;
+    //     match self.logs[replica as usize].get_mut(&instance) {
+    //         Some(entry) => if entry.msg.commands.len() == 0 {},
+    //         None => {
+    //             // insert new entry
+    //         }
+    //     }
+    // }
 
     // fn handle_try_preaccept_response(&mut self) {}
 
@@ -752,7 +789,11 @@ impl Peer {
         receiver: UnboundedReceiver<ClientMsgReply>,
     ) -> Result<()> {
         // init peer rpc
-        let mut listen_ip = self.peer_addrs.get(&self.id).unwrap().clone();
+        let mut listen_ip = if !self.wide_area {
+            self.peer_addrs.get(&self.id).unwrap().clone()
+        } else {
+            self.wide_peer_addr.get(&self.id).unwrap().clone()
+        };
         listen_ip = convert_ip_addr(listen_ip, false);
         info!("server listen ip {}", listen_ip);
         let server = RpcServer::new(listen_ip, sender.clone());
@@ -775,7 +816,11 @@ impl Peer {
             }
         }
         // init propose rpc server
-        let propose_ip = convert_ip_addr(self.propose_addr.clone(), false);
+        let propose_ip = if !self.wide_area {
+            convert_ip_addr(self.propose_addr.get(&self.id).unwrap().clone(), false)
+        } else {
+            convert_ip_addr(self.wide_propose_addr.get(&self.id).unwrap().clone(), false)
+        };
         let propose_server = ProposeServer::new(propose_ip, sender, receiver);
         tokio::spawn(async move {
             run_propose_server(propose_server).await;

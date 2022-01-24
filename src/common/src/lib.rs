@@ -2,7 +2,7 @@ pub mod config;
 
 use rand;
 
-const CONFLICT_KEY: &str = "50";
+pub const CONFLICT_KEY: &str = "50";
 
 #[derive(Debug)]
 pub struct Instance {
@@ -24,6 +24,11 @@ pub fn convert_ip_addr(ip: String, add_http: bool) -> String {
         let result = &ip[7..len];
         result.to_string()
     }
+}
+
+pub fn convert_self_ip(port: i32) -> String {
+    let prefix = String::from("localhost:");
+    prefix + port.to_string().as_str()
 }
 
 pub struct KeyGenerator {

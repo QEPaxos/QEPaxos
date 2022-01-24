@@ -52,6 +52,9 @@ pub struct Peer {
     // sn ballot
     ballot: i32,
     sn: i32,
+    //thrifty
+    thrifty: bool,
+    preferred_peer: Vec<i32>,
     alive_replicas: Vec<i32>,
     replica_mask: Vec<u8>,
     // fast quorum size
@@ -66,7 +69,10 @@ pub struct Peer {
     receiver: UnboundedReceiver<PeerMsg>,
     // used to init peer rpc
     peer_addrs: HashMap<i32, String>,
-    propose_addr: String,
+    propose_addr: HashMap<i32, String>,
+    wide_area: bool,
+    wide_peer_addr: HashMap<i32, String>,
+    wide_propose_addr: HashMap<i32, String>,
     //sender to peer
     peer_senders: HashMap<i32, Sender<Msg>>,
 
@@ -86,6 +92,8 @@ impl Peer {
         client_senders: UnboundedSender<ClientMsgReply>,
         execute: bool,
         batch_size: usize,
+        thrifty: bool,
+        wide_area: bool,
     ) -> Self {
         // init ballot
         let peer_num = config.peer_num;
@@ -106,11 +114,16 @@ impl Peer {
             }
         }
         tracing::info!("init quorum = {}, {}", quorum, quorum as i32);
-        tracing::info!("alive replicas len={}", alive_replicas.len());
+        tracing::info!(
+            "prefeered_peer {:?}",
+            config.preferred_peer[id as usize].clone()
+        );
         Self {
             id,
             ballot: 0 + quorum as i32,
             sn: 0,
+            thrifty,
+            preferred_peer: config.preferred_peer[id as usize].clone(),
             alive_replicas,
             replica_mask: mask,
             fast_quorom_size: config.fast_quorum_size,
@@ -123,12 +136,15 @@ impl Peer {
             sender_to_self: sender,
             receiver,
             peer_addrs: config.server_addrs,
-            propose_addr: config.propose_server_addrs.get(&id).unwrap().clone(),
+            propose_addr: config.propose_server_addrs.clone(),
+            wide_peer_addr: config.wide_private_server_addr.clone(),
+            wide_propose_addr: config.wide_private_propose_addr.clone(),
             peer_senders: HashMap::new(),
             client_senders,
             execute,
             batch_size,
             batch_request: Vec::new(),
+            wide_area,
         }
     }
 
@@ -150,7 +166,7 @@ impl Peer {
                 self.client_senders.clone(),
                 self.sender_to_self.clone(),
                 self.peer_num,
-                4,
+                100000,
                 self.id as usize,
             );
             spawn_blocking(move || exec.run());
@@ -379,30 +395,54 @@ impl Peer {
             }
             log_entry.responses.push(msg.clone());
             if log_entry.responses.len() == self.fast_quorom_size - 1 && log_entry.can_fast_commit {
-                // check if can commit at fast path
-                for response in log_entry.responses.iter() {
-                    if response.deps != log_entry.msg.deps {
-                        log_entry.can_fast_commit = false;
-                        return;
-                    }
-                }
-                // commit at fast path
-                log_entry.status = LogStatus::Commited;
-                let mut commit_msg = log_entry.msg.clone();
-                commit_msg.entry_type = MsgType::Commit.into();
-                if !self.execute {
-                    for iter in log_entry.msg.commands.iter() {
-                        let rsp = ClientMsgReply {
-                            command_id: iter.command_id,
-                            success: true,
-                        };
-                        if let Err(e) = self.client_senders.send(rsp) {
-                            tracing::info!("send client reply channel error {}", e);
+                if self.thrifty {
+                    // if (self.id as usize) < self.fast_quorom_size - 1 {
+                    //     //
+                    // } else {
+                    //     for i in 0..self.fast_quorom_size {}
+                    // }
+                    log_entry.status = LogStatus::Commited;
+                    let mut commit_msg = log_entry.msg.clone();
+                    commit_msg.entry_type = MsgType::Commit.into();
+                    if !self.execute {
+                        for iter in log_entry.msg.commands.iter() {
+                            let rsp = ClientMsgReply {
+                                command_id: iter.command_id,
+                                success: true,
+                            };
+                            if let Err(e) = self.client_senders.send(rsp) {
+                                tracing::info!("send client reply channel error {}", e);
+                            }
                         }
                     }
+                    // tracing::info!("fast commit instance = {:?}", commit_msg.instance);
+                    self.broadcast_to_peers(&commit_msg).await;
+                } else {
+                    // check if can commit at fast path
+                    for response in log_entry.responses.iter() {
+                        if response.deps != log_entry.msg.deps {
+                            log_entry.can_fast_commit = false;
+                            return;
+                        }
+                    }
+                    // commit at fast path
+                    log_entry.status = LogStatus::Commited;
+                    let mut commit_msg = log_entry.msg.clone();
+                    commit_msg.entry_type = MsgType::Commit.into();
+                    if !self.execute {
+                        for iter in log_entry.msg.commands.iter() {
+                            let rsp = ClientMsgReply {
+                                command_id: iter.command_id,
+                                success: true,
+                            };
+                            if let Err(e) = self.client_senders.send(rsp) {
+                                tracing::info!("send client reply channel error {}", e);
+                            }
+                        }
+                    }
+                    // tracing::info!("fast commit instance = {:?}", commit_msg.instance);
+                    self.broadcast_to_peers(&commit_msg).await;
                 }
-                // tracing::info!("fast commit instance = {:?}", commit_msg.instance);
-                self.broadcast_to_peers(&commit_msg).await;
             } else if log_entry.responses.len() == self.alive_replicas.len()
                 && log_entry.status != LogStatus::Commited
             {
@@ -695,11 +735,21 @@ impl Peer {
     }
 
     async fn broadcast_to_peers(&self, msg: &Msg) {
-        for replica in self.alive_replicas.iter() {
-            // tracing::info!("msg {:?},alive replica{}", msg, *replica);
-            let send_msg = msg.clone();
-            self.peer_senders.get(replica).unwrap().send(send_msg).await;
-            // sender.send(send_msg).await;
+        if self.thrifty {
+            for replica in self.preferred_peer.iter() {
+                self.peer_senders
+                    .get(replica)
+                    .unwrap()
+                    .send(msg.clone())
+                    .await;
+            }
+        } else {
+            for replica in self.alive_replicas.iter() {
+                // tracing::info!("msg {:?},alive replica{}", msg, *replica);
+                let send_msg = msg.clone();
+                self.peer_senders.get(replica).unwrap().send(send_msg).await;
+                // sender.send(send_msg).await;
+            }
         }
     }
 
@@ -996,7 +1046,11 @@ impl Peer {
         receiver: UnboundedReceiver<ClientMsgReply>,
     ) -> Result<()> {
         // init peer rpc
-        let mut listen_ip = self.peer_addrs.get(&self.id).unwrap().clone();
+        let mut listen_ip = if !self.wide_area {
+            self.peer_addrs.get(&self.id).unwrap().clone()
+        } else {
+            self.wide_peer_addr.get(&self.id).unwrap().clone()
+        };
         listen_ip = convert_ip_addr(listen_ip, false);
         info!("server listen ip {}", listen_ip);
         let server = RpcServer::new(listen_ip, sender.clone());
@@ -1019,7 +1073,11 @@ impl Peer {
             }
         }
         // init propose rpc server
-        let propose_ip = convert_ip_addr(self.propose_addr.clone(), false);
+        let propose_ip = if !self.wide_area {
+            convert_ip_addr(self.propose_addr.get(&self.id).unwrap().clone(), false)
+        } else {
+            convert_ip_addr(self.wide_propose_addr.get(&self.id).unwrap().clone(), false)
+        };
         let propose_server = ProposeServer::new(propose_ip, sender, receiver);
         tokio::spawn(async move {
             run_propose_server(propose_server).await;

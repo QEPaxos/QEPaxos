@@ -1,6 +1,7 @@
 #!/bin/bash
-cp target/release/latency ~/run/
-cp target/release/raft_client ~/run/
-cp target/release/server ~/run/
-cp target/release/throughput ~/run/
-cp target/release/fail ~/run/
+cp target/release/latency ~/bin
+cp target/release/raft_client ~/bin/
+cp target/release/server ~/bin/
+cp target/release/throughput ~/bin/
+#cp target/release/fail ~/bin/
+#cp target/release/wide_latency  ~/bin/

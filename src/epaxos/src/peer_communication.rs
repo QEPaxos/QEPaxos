@@ -160,7 +160,7 @@ impl ProposeServer {
 pub async fn run_propose_server(propose_server: ProposeServer) {
     let addr = propose_server.addr_to_listen.parse().unwrap();
 
-    tracing::info!("PeerServer listening on: {:?}", addr);
+    tracing::info!("Propose listening on: {:?}", addr);
 
     let server = ClientServiceServer::new(propose_server);
 

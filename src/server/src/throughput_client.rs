@@ -25,14 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for id in config.server_ids.iter() {
         // let id = 0;
         let propose_ip = config.propose_server_addrs.get(&id).unwrap().clone();
-
+        println!("try to connect to {}", propose_ip);
         let mut client = ProposeClient::new(propose_ip).await;
         let (send_to_server, server_receiver) = channel::<ClientMsg>(msg_count);
         result_stream.push(client.run_client(server_receiver).await);
         server_senders.push(send_to_server);
 
         //let mut result_stream = client.run_client(server_receiver).await;
-        sleep(Duration::from_secs(1)).await;
+        // sleep(Duration::from_secs(1)).await;
     }
 
     let (peer_done_notify, mut notify_receiver) = channel::<bool>(10);
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let total_time = start.elapsed().as_millis();
     println!("average time = {}", total_time);
     println!(
-        "throughput = {}/s",
+        "throughput = {}",
         (replicas as u128) * (msg_count as u128) * 1000 / total_time
     );
 
