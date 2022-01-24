@@ -1,13 +1,4 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TryPreAcceptReplyOpt {
-    #[prost(int32, tag = "1")]
-    pub conflict_instance: i32,
-    #[prost(int32, tag = "2")]
-    pub conflict_replica: i32,
-    #[prost(enumeration = "LogStatus", tag = "3")]
-    pub conflict_status: i32,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Msg {
     #[prost(enumeration = "MsgType", tag = "1")]
     pub entry_type: i32,
@@ -22,13 +13,11 @@ pub struct Msg {
     #[prost(int32, repeated, tag = "6")]
     pub deps: ::prost::alloc::vec::Vec<i32>,
     #[prost(message, repeated, tag = "7")]
-    pub commands: ::prost::alloc::vec::Vec<super::qepaxos_rpc::ClientMsg>,
+    pub commands: ::prost::alloc::vec::Vec<ClientMsg>,
     #[prost(enumeration = "LogStatus", optional, tag = "8")]
     pub status: ::core::option::Option<i32>,
     #[prost(bool, optional, tag = "9")]
     pub ok: ::core::option::Option<bool>,
-    #[prost(message, optional, tag = "10")]
-    pub try_preacept_reply: ::core::option::Option<TryPreAcceptReplyOpt>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Reply {}
@@ -39,6 +28,22 @@ pub struct GetLeaderReply {
     #[prost(int32, tag = "1")]
     pub leader: i32,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClientMsg {
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub value: ::prost::alloc::string::String,
+    #[prost(int32, tag = "3")]
+    pub command_id: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClientMsgReply {
+    #[prost(int32, tag = "1")]
+    pub command_id: i32,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum LogStatus {
@@ -48,6 +53,7 @@ pub enum LogStatus {
     Accepted = 3,
     Commited = 4,
     Executed = 5,
+    PreCommited = 6,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -57,10 +63,10 @@ pub enum MsgType {
     Accept = 2,
     AcceptReply = 3,
     Commit = 4,
-    Prepare = 5,
-    PrepareReply = 6,
-    TyrPreaccept = 7,
-    TryRepacceptReply = 8,
+    PreCommit = 5,
+    Prepare = 6,
+    PrepareReply = 7,
+    OutOfDate = 8,
 }
 #[doc = r" Generated client implementations."]
 pub mod communication_client {
@@ -107,7 +113,7 @@ pub mod communication_client {
             })?;
             let codec = tonic::codec::ProstCodec::default();
             let path =
-                http::uri::PathAndQuery::from_static("/epaxos_rpc.Communication/Communication");
+                http::uri::PathAndQuery::from_static("/qepaxos_rpc.Communication/Communication");
             self.inner
                 .client_streaming(request.into_streaming_request(), path, codec)
                 .await
@@ -161,11 +167,9 @@ pub mod client_service_client {
         }
         pub async fn propose(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::super::qepaxos_rpc::ClientMsg>,
-        ) -> Result<
-            tonic::Response<tonic::codec::Streaming<super::super::qepaxos_rpc::ClientMsgReply>>,
-            tonic::Status,
-        > {
+            request: impl tonic::IntoStreamingRequest<Message = super::ClientMsg>,
+        ) -> Result<tonic::Response<tonic::codec::Streaming<super::ClientMsgReply>>, tonic::Status>
+        {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Unknown,
@@ -173,7 +177,7 @@ pub mod client_service_client {
                 )
             })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/epaxos_rpc.ClientService/Propose");
+            let path = http::uri::PathAndQuery::from_static("/qepaxos_rpc.ClientService/Propose");
             self.inner
                 .streaming(request.into_streaming_request(), path, codec)
                 .await
@@ -189,7 +193,7 @@ pub mod client_service_client {
                 )
             })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/epaxos_rpc.ClientService/GetLeader");
+            let path = http::uri::PathAndQuery::from_static("/qepaxos_rpc.ClientService/GetLeader");
             self.inner.unary(request.into_request(), path, codec).await
         }
     }
@@ -250,7 +254,7 @@ pub mod communication_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/epaxos_rpc.Communication/Communication" => {
+                "/qepaxos_rpc.Communication/Communication" => {
                     #[allow(non_camel_case_types)]
                     struct CommunicationSvc<T: Communication>(pub Arc<T>);
                     impl<T: Communication> tonic::server::ClientStreamingService<super::Msg> for CommunicationSvc<T> {
@@ -309,7 +313,7 @@ pub mod communication_server {
         }
     }
     impl<T: Communication> tonic::transport::NamedService for CommunicationServer<T> {
-        const NAME: &'static str = "epaxos_rpc.Communication";
+        const NAME: &'static str = "qepaxos_rpc.Communication";
     }
 }
 #[doc = r" Generated server implementations."]
@@ -320,14 +324,13 @@ pub mod client_service_server {
     #[async_trait]
     pub trait ClientService: Send + Sync + 'static {
         #[doc = "Server streaming response type for the Propose method."]
-        type ProposeStream: futures_core::Stream<
-                Item = Result<super::super::qepaxos_rpc::ClientMsgReply, tonic::Status>,
-            > + Send
+        type ProposeStream: futures_core::Stream<Item = Result<super::ClientMsgReply, tonic::Status>>
+            + Send
             + Sync
             + 'static;
         async fn propose(
             &self,
-            request: tonic::Request<tonic::Streaming<super::super::qepaxos_rpc::ClientMsg>>,
+            request: tonic::Request<tonic::Streaming<super::ClientMsg>>,
         ) -> Result<tonic::Response<Self::ProposeStream>, tonic::Status>;
         async fn get_leader(
             &self,
@@ -366,22 +369,17 @@ pub mod client_service_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/epaxos_rpc.ClientService/Propose" => {
+                "/qepaxos_rpc.ClientService/Propose" => {
                     #[allow(non_camel_case_types)]
                     struct ProposeSvc<T: ClientService>(pub Arc<T>);
-                    impl<T: ClientService>
-                        tonic::server::StreamingService<super::super::qepaxos_rpc::ClientMsg>
-                        for ProposeSvc<T>
-                    {
-                        type Response = super::super::qepaxos_rpc::ClientMsgReply;
+                    impl<T: ClientService> tonic::server::StreamingService<super::ClientMsg> for ProposeSvc<T> {
+                        type Response = super::ClientMsgReply;
                         type ResponseStream = T::ProposeStream;
                         type Future =
                             BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
                         fn call(
                             &mut self,
-                            request: tonic::Request<
-                                tonic::Streaming<super::super::qepaxos_rpc::ClientMsg>,
-                            >,
+                            request: tonic::Request<tonic::Streaming<super::ClientMsg>>,
                         ) -> Self::Future {
                             let inner = self.0.clone();
                             let fut = async move { (*inner).propose(request).await };
@@ -404,7 +402,7 @@ pub mod client_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/epaxos_rpc.ClientService/GetLeader" => {
+                "/qepaxos_rpc.ClientService/GetLeader" => {
                     #[allow(non_camel_case_types)]
                     struct GetLeaderSvc<T: ClientService>(pub Arc<T>);
                     impl<T: ClientService> tonic::server::UnaryService<super::GetLeaderRequest> for GetLeaderSvc<T> {
@@ -463,6 +461,6 @@ pub mod client_service_server {
         }
     }
     impl<T: ClientService> tonic::transport::NamedService for ClientServiceServer<T> {
-        const NAME: &'static str = "epaxos_rpc.ClientService";
+        const NAME: &'static str = "qepaxos_rpc.ClientService";
     }
 }

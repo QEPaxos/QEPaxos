@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package raft_rpc;
-import "sepaxos_rpc.proto";
+import "qepaxos_rpc.proto";
 
 enum State{
     FOLLOWER = 0;
@@ -14,7 +14,7 @@ enum State{
 message Entry {
     int32 term = 1;
     int32 index = 2;
-    sepaxos_rpc.ClientMsg msg = 3;
+    qepaxos_rpc.ClientMsg msg = 3;
 }
 
 enum RaftMsgType{

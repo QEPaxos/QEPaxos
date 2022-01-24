@@ -4,7 +4,7 @@ mod raft_test_client;
 mod server;
 mod throughput_client;
 
-use rpc::sepaxos_rpc::ClientMsgReply;
+use rpc::qepaxos_rpc::ClientMsgReply;
 use tonic::Streaming;
 
 pub async fn wait_replies(

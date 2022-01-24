@@ -4,7 +4,7 @@ use std::process::exit;
 fn run() -> Result<(), Box<dyn Error>> {
     let proto_files = &[
         "proto/raft_rpc.proto",
-        "proto/sepaxos_rpc.proto",
+        "proto/qepaxos_rpc.proto",
         "proto/epaxos.proto",
     ];
 

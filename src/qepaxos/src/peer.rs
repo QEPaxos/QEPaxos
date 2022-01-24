@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{channel, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::task::spawn_blocking;
 use tracing::info;
 
-use rpc::sepaxos_rpc::{ClientMsgReply, LogStatus, Msg, MsgType};
+use rpc::qepaxos_rpc::{ClientMsgReply, LogStatus, Msg, MsgType};
 
 // logs matrix
 pub static mut LOGS: Vec<Vec<Option<LogEntry>>> = Vec::new();

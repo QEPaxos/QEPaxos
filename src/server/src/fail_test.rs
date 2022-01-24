@@ -1,7 +1,7 @@
 use common::{config::ServerConfig, KeyGenerator};
+use qepaxos::peer_communication::ProposeClient;
 use raft::{peer::Peer, PeerMsg};
-use rpc::sepaxos_rpc::{ClientMsg, ClientMsgReply};
-use sepaxos::peer_communication::ProposeClient;
+use rpc::qepaxos_rpc::{ClientMsg, ClientMsgReply};
 use std::{env, time::Duration};
 use tokio::{
     sync::mpsc::{channel, unbounded_channel, Sender},

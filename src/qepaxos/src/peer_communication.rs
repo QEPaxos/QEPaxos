@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::PeerMsg;
 
 use super::err::Result as SE_Result;
-use rpc::sepaxos_rpc::{
+use rpc::qepaxos_rpc::{
     client_service_client::ClientServiceClient,
     client_service_server::{ClientService, ClientServiceServer},
     communication_client::CommunicationClient,
@@ -204,8 +204,8 @@ impl ClientService for ProposeServer {
 
     async fn get_leader(
         &self,
-        request: tonic::Request<rpc::sepaxos_rpc::GetLeaderRequest>,
-    ) -> Result<tonic::Response<rpc::sepaxos_rpc::GetLeaderReply>, tonic::Status> {
+        request: tonic::Request<rpc::qepaxos_rpc::GetLeaderRequest>,
+    ) -> Result<tonic::Response<rpc::qepaxos_rpc::GetLeaderReply>, tonic::Status> {
         todo!()
     }
 }

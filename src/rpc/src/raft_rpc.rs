@@ -5,7 +5,7 @@ pub struct Entry {
     #[prost(int32, tag = "2")]
     pub index: i32,
     #[prost(message, optional, tag = "3")]
-    pub msg: ::core::option::Option<super::sepaxos_rpc::ClientMsg>,
+    pub msg: ::core::option::Option<super::qepaxos_rpc::ClientMsg>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RaftMsg {

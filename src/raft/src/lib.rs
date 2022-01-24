@@ -1,4 +1,4 @@
-use rpc::{raft_rpc::RaftMsg, sepaxos_rpc::ClientMsg};
+use rpc::{qepaxos_rpc::ClientMsg, raft_rpc::RaftMsg};
 use tokio::sync::mpsc::Sender;
 
 pub mod peer;

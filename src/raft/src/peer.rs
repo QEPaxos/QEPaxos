@@ -13,8 +13,8 @@ use common::{config::ServerConfig, convert_ip_addr};
 use futures::future::{AbortHandle, Abortable};
 use log::info;
 use rpc::{
+    qepaxos_rpc::{ClientMsg, ClientMsgReply, MsgType},
     raft_rpc::{raft_server::Raft, Entry, RaftMsg, RaftMsgType, State},
-    sepaxos_rpc::{ClientMsg, ClientMsgReply, MsgType},
 };
 use tokio::{
     sync::{

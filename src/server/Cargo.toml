@@ -32,7 +32,7 @@ name = "fail"
 path = "src/fail_test.rs"
 
 [dependencies]
-sepaxos = { path = "../sepaxos"}
+qepaxos = { path = "../qepaxos"}
 raft = { path = "../raft" }
 epaxos = { path = "../epaxos"}
 common = { path = "../common"}

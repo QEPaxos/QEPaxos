@@ -5,7 +5,7 @@ use tokio::sync::mpsc::error::SendError;
 use tonic::Status;
 
 #[derive(Debug, ThisError)]
-pub enum SEPaxosError {
+pub enum QEPaxosError {
     #[error("Io Error {0}")]
     Io(#[from] IoError),
     #[error("grpc Error {0}")]
@@ -18,10 +18,10 @@ pub enum SEPaxosError {
     Other(#[from] Box<dyn Error + Send + Sync>),
 }
 
-pub type Result<T> = ::std::result::Result<T, SEPaxosError>;
+pub type Result<T> = ::std::result::Result<T, QEPaxosError>;
 
-impl From<String> for SEPaxosError {
+impl From<String> for QEPaxosError {
     fn from(err: String) -> Self {
-        SEPaxosError::Common(err)
+        QEPaxosError::Common(err)
     }
 }

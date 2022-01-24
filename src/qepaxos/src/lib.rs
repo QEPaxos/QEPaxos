@@ -1,5 +1,5 @@
 use common::Instance;
-use rpc::sepaxos_rpc::{ClientMsg, Msg};
+use rpc::qepaxos_rpc::{ClientMsg, Msg};
 
 pub mod err;
 pub mod execution;

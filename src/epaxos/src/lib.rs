@@ -1,5 +1,5 @@
 use rpc::epaxos_rpc::Msg;
-use rpc::sepaxos_rpc::ClientMsg;
+use rpc::qepaxos_rpc::ClientMsg;
 pub mod err;
 pub mod execution;
 pub mod peer;

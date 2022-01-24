@@ -10,7 +10,7 @@ use rpc::epaxos_rpc::{
     communication_server::{Communication, CommunicationServer},
     Msg, Reply,
 };
-use rpc::sepaxos_rpc::{ClientMsg, ClientMsgReply};
+use rpc::qepaxos_rpc::{ClientMsg, ClientMsgReply};
 use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};

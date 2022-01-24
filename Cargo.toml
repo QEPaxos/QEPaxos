@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "src/sepaxos",
+    "src/qepaxos",
     "src/server",
     "src/epaxos",
     "src/rpc",

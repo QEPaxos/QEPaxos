@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::peer::{CRT_INSTANCE, EXECUTED_UP_TO, LOGS};
 use crate::PeerMsg;
-use rpc::sepaxos_rpc::{ClientMsgReply, LogStatus};
+use rpc::qepaxos_rpc::{ClientMsgReply, LogStatus};
 use tracing;
 
 fn check_safe(replica: i32, instance: usize) -> bool {

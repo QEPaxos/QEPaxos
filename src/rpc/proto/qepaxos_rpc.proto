@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package sepaxos_rpc;
+package qepaxos_rpc;
 
 enum LogStatus {
     PREPARING = 0;

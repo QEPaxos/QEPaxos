@@ -4,11 +4,11 @@ use common::config::ServerConfig;
 use env_logger::Env;
 use epaxos::peer as EPaxosPeer;
 use epaxos::PeerMsg as EPaxosMsg;
+use qepaxos::peer::Peer as qepaxosPeer;
+use qepaxos::PeerMsg as qepaxosMsg;
 use raft::peer as RaftPeer;
 use raft::PeerMsg as RaftMsg;
-use rpc::sepaxos_rpc::{ClientMsg, ClientMsgReply};
-use sepaxos::peer::Peer as SEPaxosPeer;
-use sepaxos::PeerMsg as SEPaxosMsg;
+use rpc::qepaxos_rpc::{ClientMsg, ClientMsgReply};
 use tokio::{
     sync::mpsc::{channel, unbounded_channel},
     time::sleep,
@@ -38,10 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ServerConfig::new(replica_nums)
     };
     let (sender, receiver) = unbounded_channel::<ClientMsgReply>();
-    if server_type.eq_ignore_ascii_case("sepaxos") {
-        tracing::info!("starting sepaxos");
-        let (sender_to_peer, peer_receiver) = unbounded_channel::<SEPaxosMsg>();
-        let mut peer = SEPaxosPeer::new(
+    if server_type.eq_ignore_ascii_case("qepaxos") {
+        tracing::info!("starting qepaxos");
+        let (sender_to_peer, peer_receiver) = unbounded_channel::<qepaxosMsg>();
+        let mut peer = qepaxosPeer::new(
             id,
             config,
             sender_to_peer.clone(),

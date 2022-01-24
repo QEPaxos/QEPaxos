@@ -1,15 +1,15 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use rpc::{
+    qepaxos_rpc::{
+        client_service_client::ClientServiceClient,
+        client_service_server::{ClientService, ClientServiceServer},
+        ClientMsg, ClientMsgReply, GetLeaderReply, GetLeaderRequest,
+    },
     raft_rpc::{
         raft_client::RaftClient,
         raft_server::{Raft, RaftServer},
         RaftMsg, Reply,
-    },
-    sepaxos_rpc::{
-        client_service_client::ClientServiceClient,
-        client_service_server::{ClientService, ClientServiceServer},
-        ClientMsg, ClientMsgReply, GetLeaderReply, GetLeaderRequest,
     },
 };
 

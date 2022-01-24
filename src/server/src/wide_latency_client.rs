@@ -4,8 +4,8 @@ use common::config::ServerConfig;
 use common::KeyGenerator;
 use common::CONFLICT_KEY;
 use epaxos::peer_communication::ProposeClient as epaxos_client;
-use rpc::sepaxos_rpc::{ClientMsg, ClientMsgReply};
-use sepaxos::peer_communication::ProposeClient as sepaxos_client;
+use qepaxos::peer_communication::ProposeClient as qepaxos_client;
+use rpc::qepaxos_rpc::{ClientMsg, ClientMsgReply};
 use time;
 use tokio::{
     sync::mpsc::{channel, Sender},
@@ -54,8 +54,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (send_to_leader, leader_receiver) = channel::<ClientMsg>(msg_count);
     println!("connect to leader {}", propose_ip);
 
-    if server_type.eq_ignore_ascii_case("sepaxos") {
-        let mut leader_client = sepaxos_client::new(propose_ip).await;
+    if server_type.eq_ignore_ascii_case("qepaxos") {
+        let mut leader_client = qepaxos_client::new(propose_ip).await;
         let mut result_stream: Streaming<ClientMsgReply> =
             leader_client.run_client(leader_receiver).await;
         let mut latency_sender: Sender<ClientMsg> = send_to_leader;
@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for id in config.server_ids.iter() {
             let propose_ip = config.propose_server_addrs.get(&id).unwrap().clone();
             println!("connect to replica{}", propose_ip);
-            let mut client = sepaxos_client::new(propose_ip).await;
+            let mut client = qepaxos_client::new(propose_ip).await;
             let (send_to_server, server_receiver) = channel::<ClientMsg>(msg_count);
             if *id == id_to_connect {
                 // result_stream = client.run_client(server_receiver).await;

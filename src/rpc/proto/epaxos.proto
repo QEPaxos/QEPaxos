@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package epaxos_rpc;
 
-import "sepaxos_rpc.proto";
+import "qepaxos_rpc.proto";
 
 enum LogStatus {
     PREPARING = 0;
@@ -38,7 +38,7 @@ message Msg {
     int32 instance = 4;
     int32 ballot = 5;
     repeated int32 deps = 6;
-    repeated sepaxos_rpc.ClientMsg commands = 7;
+    repeated qepaxos_rpc.ClientMsg commands = 7;
     optional LogStatus status = 8;
     optional bool ok = 9;
     optional TryPreAcceptReplyOpt try_preacept_reply = 10;
@@ -61,6 +61,6 @@ message GetLeaderReply {
 }
 
 service ClientService{
-    rpc Propose(stream sepaxos_rpc.ClientMsg) returns(stream sepaxos_rpc.ClientMsgReply) {}
+    rpc Propose(stream qepaxos_rpc.ClientMsg) returns(stream qepaxos_rpc.ClientMsgReply) {}
     rpc GetLeader(GetLeaderRequest) returns(GetLeaderReply) {}
 }
